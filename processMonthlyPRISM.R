@@ -7,7 +7,7 @@ library(tidyr)
 
 # update with new files (adapted from ~/RProjects/PRISMDownload/monthlyDownloadPRISM.R)
 # updated to new version of prism R
-#prism_set_dl_dir("/scratch/crimmins/PRISM/monthly/precip")
+prism_set_dl_dir("/scratch/crimmins/PRISM/monthly/precip")
 # download tmean daily data
 #get_prism_monthlys(type="ppt", year = 2019:2020, mon = 1:12, keepZip=F)
 # clean archive
@@ -36,11 +36,13 @@ pcpStack <- prism_stack(names$files[dateOrder$ix])
 
 # crop to AZ
   # get boundary
-  us<-getData('GADM', country='USA', level=2)
-  az<-subset(us, NAME_1=="Arizona")
+  #us<-getData('GADM', country='USA', level=2)
+  #az<-subset(us, NAME_1=="Arizona")
   # crop DEM grid down to CWA
-  e <- extent(az)
-  pcpStack_az <- crop(pcpStack, az)
+  #e <- extent(az)
+  # slightly adjust eastern edge of crop, -109
+  e <- extent(-114.8,-109,31.3,37)
+  pcpStack_az <- crop(pcpStack, e)
 
   writeRaster(pcpStack_az,filename="/home/crimmins/RProjects/StationDrought/AZ_monthlyPRISM_prec_1895_2020.grd", overwrite=TRUE )  
   
@@ -55,8 +57,10 @@ pcpStack <- prism_stack(names$files[dateOrder$ix])
 #p <- pd_plot_slice(subsetPPT, point)
 
 # faster(?) extract... https://www.r-bloggers.com/2015/05/extract-values-from-numerous-rasters-in-less-time/
+  pcpStack_az<-stack("~/RProjects/StationDrought/AZ_monthlyPRISM_prec_1895_2020")
+  
 library(ff)
-mat <- ff(vmode="double",dim=c(ncell(pcpStack_az),nlayers(pcpStack_az)),filename=paste0(getwd(),"/stack.ffdata"))
+mat <- ff(vmode="double",dim=c(ncell(pcpStack_az),nlayers(pcpStack_az)),filename=paste0(getwd(),"/stack.ffdata"), overwrite = TRUE)
 for(i in 1:nlayers(pcpStack_az)){
   mat[,i] <- pcpStack_az[[i]][]
 }

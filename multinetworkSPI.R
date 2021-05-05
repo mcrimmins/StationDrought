@@ -18,6 +18,7 @@ library(htmlwidgets)
 library(raster)
 library(ff)
 library(leaflet)
+library(leafem)
 
 # load data
 load("prismGrid.RData")
@@ -30,6 +31,20 @@ numberOfDays <- function(date) {
   }
   return(as.integer(format(date - 1, format="%d")))
 }
+
+# USDM data
+download.file("https://droughtmonitor.unl.edu/data/shapefiles_m/USDM_current_M.zip",
+              destfile = "usdm.zip")
+  unzip("usdm.zip", exdir = "USDMtemp",overwrite = TRUE)
+  infoSHP<-rgdal::ogrListLayers("USDMtemp")
+  usdmSHP<-rgdal::readOGR(dsn="USDMtemp",layer=infoSHP)
+  # clip to smaller region
+  usdmSHP <- crop(usdmSHP, extent(-118.3,-105.3, 30.5, 39))
+  # color ramp
+  USDMpal <- colorFactor("YlOrRd", c(0,1,2,3,4))
+  # get USDM date
+  temp<-substring(infoSHP, c(6,10,12), c(9,11,13))
+  usdmLab<-paste0(temp[2],"-",temp[3],"-",temp[1])
 
 ##### USE FF TO CREATE PRISM MATRIX FOR CLIMOS
 pcpStack_az<-stack("~/RProjects/StationDrought/AZ_monthlyPRISM_prec_1895_2020")
@@ -46,8 +61,11 @@ save(mat,file=paste0(getwd(),"/data.RData"))
 #dateRangeEnd<-"2021-03-22"
 
 # 365-day SPI
-dateRangeStart=format(Sys.Date()-367, "%Y-%m-%d")
-dateRangeEnd=format(Sys.Date()-2, "%Y-%m-%d")
+currDate<-Sys.Date()
+# or test date
+#currDate<-as.Date("2020-07-15",format="%Y-%m-%d")
+dateRangeStart=format(currDate-367, "%Y-%m-%d")
+dateRangeEnd=format(currDate-2, "%Y-%m-%d")
 allDates<-seq(as.Date(dateRangeStart), as.Date(dateRangeEnd),1)
 
 # 90-day SPI
@@ -81,7 +99,6 @@ out<-postForm("http://data.rcc-acis.org/MultiStnData",
               .opts = list(postfields = jsonQuery, 
                            httpheader = c('Content-Type' = 'application/json', Accept = 'application/json')))
 outACIS<-fromJSON(out)
-
 
 # melt data
 #meltData<-reshape::melt(summary, id=1:3)
@@ -227,7 +244,7 @@ sumPeriod$percMiss<-(1-(sumPeriod$countObs/length(subDates)))
 sumPeriod$daysMiss<-(length(subDates)-sumPeriod$countObs)
 
 # Combine networks into dataframe
-sumACIS$network<-"NOAA"
+sumACIS$network<-"NOAA-GHCN"
 sumPeriod$network<-"RAINLOG"
 sumPeriod<-rbind.data.frame(sumPeriod[,c(5,4,3,8,10,9,6,11)],sumACIS)
 
@@ -264,14 +281,17 @@ dayLast<-as.numeric(format(perEnd, "%d"))
 # dayFirst<-as.numeric(format(as.Date(dateRangeStart,"%Y-%m-%d"), "%d"))
 # dayLast<-as.numeric(format(as.Date(dateRangeEnd,"%Y-%m-%d"), "%d"))
 
-#monthFirst<-12
-#monthLast<-3
+#monthFirst<-1
+#monthLast<-5
 
-if(monthFirst>monthLast){
-  mos<-c(monthFirst, which((monthLast<seq(1,12,1))==FALSE))
-}else{
-  mos<-seq(monthFirst,monthLast,1)
-}
+# if(monthFirst>=monthLast){
+#   mos<-c(monthFirst, which((monthLast>seq(1,12,1))==FALSE))
+# }else{
+#   mos<-seq(monthFirst,monthLast,1)
+# }
+
+# sequence of months
+mos<-unique(as.numeric(format(seq(perBeg,perEnd, by="day"),"%m")))
 
 # get days in month
 f1<-function(x){numberOfDays(as.Date(paste0(x,"-01-2000"),"%m-%d-%Y"))}
@@ -298,7 +318,9 @@ datesMo<-as.data.frame(seq.Date(as.Date("1895-01-01","%Y-%m-%d"),as.Date("2020-1
 # add in columns for sumPeriod df
 sumPeriod$avgPRISM<-NA
 sumPeriod$diffAvg<-NA
-sumPeriod$spi<-NA  
+sumPeriod$spi<-NA 
+sumPeriod$spi.sci<-NA
+sumPeriod$perRank<-NA
 
 ## FIX GRID TO GO PAST AZ BOUNDARY
 for(i in 1:nrow(sumPeriod)){
@@ -326,6 +348,16 @@ for(i in 1:nrow(sumPeriod)){
   spiFitted<-as.data.frame(spiFitted$fitted)
   spiFitted<-na.omit(spiFitted)
   sumPeriod$spi[i]<-spiFitted[nrow(spiFitted),1]
+  
+  # SCI package SPI estimation
+  spi.para <- SCI::fitSCI(expVec,first.mon=1,distr="gamma",time.scale=1,p0=TRUE)
+  spi.sci <- SCI::transformSCI(expVec,first.mon=1,obj=spi.para,sci.limit=3)
+  spi.sci<-na.omit(spi.sci)
+  sumPeriod$spi.sci[i]<-spi.sci[length(spi.sci)]
+  
+  # percent rank
+  sumPeriod$perRank[i]<-round(last(trunc(rank(pptTemp))/length(pptTemp))*100,0)
+  
 }
 
 sumPeriod$diffAvg<-sumPeriod$sumPrecip-sumPeriod$avgPRISM
@@ -393,49 +425,93 @@ sumPeriod$diffAvg<-sumPeriod$sumPrecip-sumPeriod$avgPRISM
 
 #load("prismGrid.RData")
 
-# station labs
+# alt-format station labs
 labs <- lapply(seq(nrow(sumPeriod)), function(i) {
-  paste0( '<p> <b> Observed Precip (in): ', round(sumPeriod[i, "sumPrecip"],2), '</b></p>', 
-          '<p> PRISM Avg (in): ', round(sumPeriod[i, "avgPRISM"],2), '</p>',
-          '<p> Diff from Avg (in): ', round(sumPeriod[i, "diffAvg"],2), '</p>',
-          '<p> <font color="red"> SPI: ', round(sumPeriod[i, "spi"],2), '</font></p>',
-          '<p> Days missing: ', sumPeriod[i,"daysMiss"], '</p>',
-          '<p> Network: ', sumPeriod[i,"network"], '</p>') 
+  paste0( '<b> Observed Precip (in): ', round(sumPeriod[i, "sumPrecip"],2), '</b><br>', 
+          'PRISM Avg (in): ', round(sumPeriod[i, "avgPRISM"],2), '<br>',
+          'Diff from Avg (in): ', round(sumPeriod[i, "diffAvg"],2), '<br>',
+          '<b> <font color="red"> SPI: ', round(sumPeriod[i, "spi.sci"],2), '</font></b><br>',
+          '%  rank: ', sumPeriod[i,"perRank"], '<br>',
+          'Max 1-day Precip: ', sumPeriod[i,"maxPrecip"], '<br>',
+          'Days missing: ', sumPeriod[i,"daysMiss"], '<br>',
+          'Gauge: ', sumPeriod[i,"gaugeID"], '<br>',
+          'Network: ', sumPeriod[i,"network"]) 
 })
 
 pal <- colorNumeric(
   palette = colorRampPalette(c('chocolate4','snow3','green'))(length(sumPeriod$spi)), 
   domain = c(-3,3))
-mapTitle<-paste0(periodName," SPI: ", format(perBeg, "%b-%d-%y"),"<br>to",
+mapTitle<-paste0(periodName," SPI:<br>", format(perBeg, "%b-%d-%y"),"<br>to ",
        format(perEnd, "%b-%d-%y"))
 
+# network groups
+networks = as.character(unique(sumPeriod$network))
+
 #leafMap<-leaflet() %>% addProviderTiles(providers$Esri.WorldTopoMap) %>%
-leafMap<-leaflet() %>% addProviderTiles(providers$CartoDB.Positron) %>%
-  #setView(-111.839389, 33.178586, zoom = 8) %>%
+leafMap<-leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron, group="basemap") %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="satellite") %>%
+  setView(-111.87672536355456, 34.1, zoom = 7) %>%  
   addPolygons(data=prismGrid, color = "#444444", weight = 0.5, smoothFactor = 0.5,
               opacity = 1.0, fillOpacity = 0.1,
               highlightOptions = highlightOptions(color = "red", weight = 2,
                                                   bringToFront = FALSE),
-             group = "grid") %>%
-  addCircleMarkers(sumPeriod$lon, sumPeriod$lat,
-                   radius = 7,
-                   color = "grey66",
-                   fillColor =  pal(sumPeriod$spi),
-                   fillOpacity = 1,
-                   label = lapply(labs, htmltools::HTML),
-                   group = "points") %>%
+              group = "PRISM grid") %>%
+  addPolygons(data=usdmSHP,
+              fillColor = ~USDMpal(DM),
+              weight = 1,
+              opacity = 1,
+              color = "black",
+              dashArray = "3",
+              fillOpacity = 0.2, label = paste0("D",usdmSHP$DM,": ",usdmLab), group = "USDM")
+ # addWMSTiles(
+ #    baseUrl = "http://ndmc-001.unl.edu:8080/cgi-bin/mapserv.exe?map=/ms4w/apps/usdm/service/usdm_current_wms.map&SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=usdm_current&WIDTH=640&HEIGHT=480&crs=EPSG:3857&styles=default&format=image/png&bbox=-18367715.9809,1689200.13961,-6679169.4476,15538711.0963",
+ #    layers = "usdm_current",
+ #    options = WMSTileOptions(format = "image/png", transparent = T, version ="1.3.0", opacity=0.5, group="USDM", attribution="US Drought Monitor")
+ #  )
+  
+for(n in networks){
+  subNet<-sumPeriod[sumPeriod$network==n,]
+  leafMap<- leafMap %>% addCircleMarkers(data=subNet, lng=~lon, lat=~lat,
+                   radius = 6,
+                   color = "black",
+                   fillColor =  pal(subNet$spi.sci),
+                   stroke = TRUE,
+                   weight = 1,
+                   fillOpacity = 0.9,
+                   label = lapply(labs[which(sumPeriod$network==n)], htmltools::HTML),
+                   group = n)
+}
+  
+  
+leafMap<-leafMap %>%
+  #setView(-111.839389, 33.178586, zoom = 8) %>%
   addLegend("bottomright", pal = pal, values = c(-3,3),
             title = mapTitle,
             opacity = 1) %>%
   addLayersControl(
-    overlayGroups = c("grid", "points"),
+    baseGroups = c("basemap","satellite"),
+    overlayGroups = c("PRISM grid", "RAINLOG", "NOAA-GHCN", "USDM"),
     options = layersControlOptions(collapsed = FALSE))%>%
-  hideGroup("grid")
+  hideGroup(c("PRISM grid")) %>%
+  addLogo("https://cals.arizona.edu/climate/misc/SPImaps/UA_CSAP_CLIMAS_logos_horiz.png",
+          position = "bottomleft",
+          offset.x = 20,
+          offset.y = 20,
+          width = 200,
+          height = 36,
+          src = "remote")
 
 # save map
 saveWidget(leafMap, file=paste0("/home/crimmins/RProjects/StationDrought/maps/MultiNetwork_",periodName,"_SPI.html"), selfcontained = FALSE)
 ##### END LEAFLET MAP
-
 print(periodName)
-
 }
+
+# create Website with markdown ----
+library(rmarkdown)
+library(knitr)
+
+render('/home/crimmins/RProjects/StationDrought/maps/AZdrought.Rmd', output_file='index.html',
+       output_dir='/home/crimmins/RProjects/StationDrought/maps', clean=TRUE)
+
