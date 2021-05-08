@@ -37,11 +37,13 @@ download.file("https://droughtmonitor.unl.edu/data/shapefiles_m/USDM_current_M.z
               destfile = "usdm.zip")
   unzip("usdm.zip", exdir = "USDMtemp",overwrite = TRUE)
   infoSHP<-rgdal::ogrListLayers("USDMtemp")
-  usdmSHP<-rgdal::readOGR(dsn="USDMtemp",layer=infoSHP)
+  usdmSHP<-rgdal::readOGR(dsn="USDMtemp",layer=infoSHP[1])
   # clip to smaller region
   usdmSHP <- crop(usdmSHP, extent(-118.3,-105.3, 30.5, 39))
-  # color ramp
+  # color ramp or alt colors from https://www.esri.com/arcgis-blog/products/arcgis-living-atlas/mapping/putting-the-emphasis-where-it-matters/
   USDMpal <- colorFactor("YlOrRd", c(0,1,2,3,4))
+  #USDMpal <- colorFactor(c("#f2ecaa","#edc97b","#eb9550","#d94d23","#990000"), c(0,1,2,3,4))
+  
   # get USDM date
   temp<-substring(infoSHP, c(6,10,12), c(9,11,13))
   usdmLab<-paste0(temp[2],"-",temp[3],"-",temp[1])
@@ -122,7 +124,7 @@ while (done==0) {
                 .opts = list(postfields = jsonQuery, 
                              httpheader = c('Content-Type' = 'application/json', Accept = 'application/json')))
   out<-fromJSON(out)
-  if(exists("out")==TRUE){
+  if(exists("out")==TRUE && length(out) != 0){
     if (i==0){
       dataStack<-out
     }else{
@@ -250,6 +252,8 @@ sumPeriod<-rbind.data.frame(sumPeriod[,c(5,4,3,8,10,9,6,11)],sumACIS)
 
 # subset less than 10% missing
 sumPeriod<-subset(sumPeriod, percMiss>=0 & percMiss<=0.07)
+# QA/QC - remove max 1-day >10"
+sumPeriod<-subset(sumPeriod, maxPrecip<=10)
 ##### END SUMMARIZE DATA
 
 ##### DEVELOP CLIMATOLOGIES USING LOCAL MONTHLY PRISM 1895-2020
@@ -361,6 +365,7 @@ for(i in 1:nrow(sumPeriod)){
 }
 
 sumPeriod$diffAvg<-sumPeriod$sumPrecip-sumPeriod$avgPRISM
+
 ##### END CLIMATOLOGIES
 
 ##### DEVELOP CLIMATOLOGIES USING DAILY PRISM RCC-ACIS -- TOO SLOW
@@ -439,8 +444,8 @@ labs <- lapply(seq(nrow(sumPeriod)), function(i) {
 })
 
 pal <- colorNumeric(
-  palette = colorRampPalette(c('chocolate4','snow3','green'))(length(sumPeriod$spi)), 
-  domain = c(-3,3))
+  palette = colorRampPalette((c('chocolate4','snow3','green')))(length(sumPeriod$spi)), 
+  domain = c(3,-3))
 mapTitle<-paste0(periodName," SPI:<br>", format(perBeg, "%b-%d-%y"),"<br>to ",
        format(perEnd, "%b-%d-%y"))
 
@@ -451,6 +456,7 @@ networks = as.character(unique(sumPeriod$network))
 leafMap<-leaflet() %>%
   addProviderTiles(providers$CartoDB.Positron, group="basemap") %>%
   addProviderTiles(providers$Esri.WorldImagery, group="satellite") %>%
+  addProviderTiles(providers$Esri.WorldTopoMap, group="topomap") %>%
   setView(-111.87672536355456, 34.1, zoom = 7) %>%  
   addPolygons(data=prismGrid, color = "#444444", weight = 0.5, smoothFactor = 0.5,
               opacity = 1.0, fillOpacity = 0.1,
@@ -463,7 +469,7 @@ leafMap<-leaflet() %>%
               opacity = 1,
               color = "black",
               dashArray = "3",
-              fillOpacity = 0.2, label = paste0("D",usdmSHP$DM,": ",usdmLab), group = "USDM")
+              fillOpacity = 0.2, label = paste0("USDM D",usdmSHP$DM,": ",usdmLab), group = "USDM")
  # addWMSTiles(
  #    baseUrl = "http://ndmc-001.unl.edu:8080/cgi-bin/mapserv.exe?map=/ms4w/apps/usdm/service/usdm_current_wms.map&SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=usdm_current&WIDTH=640&HEIGHT=480&crs=EPSG:3857&styles=default&format=image/png&bbox=-18367715.9809,1689200.13961,-6679169.4476,15538711.0963",
  #    layers = "usdm_current",
@@ -489,15 +495,19 @@ leafMap<-leafMap %>%
   addLegend("bottomright", pal = pal, values = c(-3,3),
             title = mapTitle,
             opacity = 1) %>%
+            #labFormat = labelFormat(transform = function(x) sort(x, decreasing = TRUE))) %>%
+  # addLegend("bottomright", pal = USDMpal, values = usdmSHP$DM,
+  #           title = "US Drought Monitor",
+  #           opacity = 1) %>%
   addLayersControl(
-    baseGroups = c("basemap","satellite"),
+    baseGroups = c("basemap","satellite","topomap"),
     overlayGroups = c("PRISM grid", "RAINLOG", "NOAA-GHCN", "USDM"),
     options = layersControlOptions(collapsed = FALSE))%>%
   hideGroup(c("PRISM grid")) %>%
   addLogo("https://cals.arizona.edu/climate/misc/SPImaps/UA_CSAP_CLIMAS_logos_horiz.png",
           position = "bottomleft",
           offset.x = 20,
-          offset.y = 20,
+          offset.y = 30,
           width = 200,
           height = 36,
           src = "remote")
@@ -515,3 +525,4 @@ library(knitr)
 render('/home/crimmins/RProjects/StationDrought/maps/AZdrought.Rmd', output_file='index.html',
        output_dir='/home/crimmins/RProjects/StationDrought/maps', clean=TRUE)
 
+source('/home/crimmins/RProjects/StationDrought/pushNotify.R')
