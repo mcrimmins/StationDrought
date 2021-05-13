@@ -2,8 +2,8 @@
 # adapted from obsForBen.R
 # get Rainlog data for list of days
 # MAC 03/24/21
-# added multinetwork stations
-# 4/30/21
+# added multinetwork stations 4/30/21
+# added in synoptic API 5/11/2021
 
 #library(plyr)
 library(RCurl)
@@ -19,6 +19,12 @@ library(raster)
 library(ff)
 library(leaflet)
 library(leafem)
+
+ptm <- proc.time()
+
+# update the mesonet dataframe from Synoptic Labs
+source("/home/crimmins/RProjects/StationDrought/synopticAPI_historic.R")
+load("~/RProjects/StationDrought/synopticData/AZDailyPrecip_working_DataFrame.RData")
 
 # load data
 load("/home/crimmins/RProjects/StationDrought/prismGrid.RData")
@@ -38,9 +44,9 @@ numberOfDays <- function(date) {
 
 # USDM data
 tryCatch(download.file("https://droughtmonitor.unl.edu/data/shapefiles_m/USDM_current_M.zip",
-         destfile = "/home/crimmins/RProjects/StationDrought/usdm.zip"),
+                       destfile = "/home/crimmins/RProjects/StationDrought/usdm.zip"),
          error = function(e) print('File not available'))
-    
+
 tryCatch(unzip("/home/crimmins/RProjects/StationDrought/usdm.zip", exdir = "/home/crimmins/RProjects/StationDrought/USDMtemp",overwrite = TRUE),
          error = function(e) print('Error unzipping file; no file?'))
 
@@ -67,13 +73,13 @@ save(mat,file=paste0(getwd(),"/data.RData"))
 # end write
 
 # set date ranges
-#dateRangeStart<-"2021-03-22"
+#dateRangeStart<-"2019-07-22"
 #dateRangeEnd<-"2021-03-22"
 
 # 365-day SPI
 currDate<-Sys.Date()
 # or test date
-#currDate<-as.Date("2020-07-15",format="%Y-%m-%d")
+#currDate<-as.Date("2020-09-30",format="%Y-%m-%d")
 dateRangeStart=format(currDate-367, "%Y-%m-%d")
 dateRangeEnd=format(currDate-2, "%Y-%m-%d")
 allDates<-seq(as.Date(dateRangeStart), as.Date(dateRangeEnd),1)
@@ -258,6 +264,41 @@ sumACIS$network<-"NOAA-GHCN"
 sumPeriod$network<-"RAINLOG"
 sumPeriod<-rbind.data.frame(sumPeriod[,c(5,4,3,8,10,9,6,11)],sumACIS)
 
+###### SYNOPTIC API - MESONET data
+# add in mesonet data
+subCombObs<-combObs[combObs$precipDate>=perBeg & combObs$precipDate<=perEnd,]
+# delete stid/day duplicates
+subCombObs<-subCombObs [!duplicated(subCombObs[c("STID","precipDate")]),]
+
+  # # total daily precip
+  sumMESO<-subCombObs %>% group_by(STID) %>%
+                    summarise(dateStart=first(precipDate),
+                              dateEnd=last(precipDate),
+                              name=first(NAME),
+                              netID=first(MNET_ID),
+                              netName=first(SHORTNAME),
+                              lat=first(LATITUDE),
+                              lon=first(LONGITUDE),
+                              sumPrecip=sum(total),
+                              maxPrecip=max(total),
+                              nobs=n())
+
+  # calculate percent missing
+  sumMESO$percMiss<-(1-(sumMESO$nobs/length(subDates)))
+  sumMESO$daysMiss<-(length(subDates)-sumMESO$nobs)
+  # gauge name label
+  sumMESO$gaugeID<-paste0(sumMESO$name," (",sumMESO$netName,")")
+  sumMESO$network<-"MESOWEST"
+  # fix column types
+  sumMESO$lon<-as.numeric(sumMESO$lon)
+  sumMESO$lat<-as.numeric(sumMESO$lat)
+  # thin/reorder
+  sumMESO<-sumMESO[,c(8,7,14,9,13,12,10,15)]
+  
+  # combine with sumPeriod
+  sumPeriod<-rbind.data.frame(sumPeriod, sumMESO)
+#####
+  
 # subset less than 10% missing
 sumPeriod<-subset(sumPeriod, percMiss>=0 & percMiss<=0.07)
 # QA/QC - remove max 1-day >10"
@@ -363,7 +404,8 @@ for(i in 1:nrow(sumPeriod)){
   
   # SCI package SPI estimation
   spi.para <- SCI::fitSCI(expVec,first.mon=1,distr="gamma",time.scale=1,p0=TRUE)
-  spi.sci <- SCI::transformSCI(expVec,first.mon=1,obj=spi.para,sci.limit=3)
+  #spi.sci <- SCI::transformSCI(expVec,first.mon=1,obj=spi.para,sci.limit=3)
+  spi.sci <- SCI::transformSCI(expVec,first.mon=1,obj=spi.para)
   spi.sci<-na.omit(spi.sci)
   sumPeriod$spi.sci[i]<-spi.sci[length(spi.sci)]
   
@@ -373,6 +415,22 @@ for(i in 1:nrow(sumPeriod)){
 }
 
 sumPeriod$diffAvg<-sumPeriod$sumPrecip-sumPeriod$avgPRISM
+
+##### 
+# QA/QC using SPI values
+netStats<-sumPeriod %>% group_by(network) %>%
+                        summarise(maxSPI=max(spi.sci, na.rm = TRUE),
+                                  minSPI=min(spi.sci, na.rm = TRUE),
+                                  medSPI=median(spi.sci, na.rm = TRUE),
+                                  iqrSPI=IQR(spi.sci, na.rm = TRUE),
+                                  meanSPI=mean(spi.sci, na.rm=TRUE),
+                                  sdSPI=sd(spi.sci, na.rm=TRUE))
+# trim stations that are greater than 3sd greater than mean
+sumPeriod<-subset(sumPeriod, spi.sci<=netStats$sdSPI[2]*3+netStats$meanSPI[2])
+sumPeriod$spi.sci<-ifelse(sumPeriod$spi.sci>3, 3, sumPeriod$spi.sci)
+sumPeriod$spi.sci<-ifelse(sumPeriod$spi.sci<(-3), -3, sumPeriod$spi.sci)
+
+##### 
 
 ##### END CLIMATOLOGIES
 
@@ -518,7 +576,7 @@ leafMap<-leafMap %>%
   #           opacity = 1) %>%
   addLayersControl(
     baseGroups = c("basemap","satellite","topomap"),
-    overlayGroups = c("PRISM grid", "RAINLOG", "NOAA-GHCN", "USDM"),
+    overlayGroups = c("PRISM grid", "RAINLOG", "NOAA-GHCN","MESOWEST","USDM"),
     options = layersControlOptions(collapsed = FALSE))%>%
   hideGroup(c("PRISM grid")) %>%
   addLogo("https://cals.arizona.edu/climate/AZdrought/UA_CSAP_CLIMAS_logos_horiz.png",
@@ -530,16 +588,18 @@ leafMap<-leafMap %>%
           src = "remote")
 
 # save map
-saveWidget(leafMap, file=paste0("/home/crimmins/RProjects/StationDrought/maps/MultiNetwork_",periodName,"_SPI.html"), selfcontained = FALSE)
+saveWidget(leafMap, file=paste0("/home/crimmins/RProjects/StationDrought/testMaps/MultiNetwork_",periodName,"_SPI.html"), selfcontained = FALSE)
 ##### END LEAFLET MAP
 print(periodName)
 }
+
+proc.time() - ptm
 
 # create Website with markdown ----
 library(rmarkdown)
 library(knitr)
 
-render('/home/crimmins/RProjects/StationDrought/maps/AZdrought.Rmd', output_file='index.html',
+render('/home/crimmins/RProjects/StationDrought/maps/AZdrought2.Rmd', output_file='index.html',
        output_dir='/home/crimmins/RProjects/StationDrought/maps', clean=TRUE)
 
 source('/home/crimmins/RProjects/StationDrought/pushNotify.R')
