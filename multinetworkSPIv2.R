@@ -20,7 +20,7 @@ library(ff)
 library(leaflet)
 library(leafem)
 
-ptm <- proc.time()
+
 
 # update the mesonet dataframe from Synoptic Labs
 source("/home/crimmins/RProjects/StationDrought/synopticAPI_historic.R")
@@ -230,12 +230,16 @@ for(k in 1:length(period)){
   # convert obs to numeric
   summary[1:ncol(summary)] <- sapply(summary[1:ncol(summary)],as.character)
   summary[1:ncol(summary)] <- sapply(summary[1:ncol(summary)],as.numeric)
+  
   # add metadata
   summary<-cbind(ll,meta$name,rowSums(summary, na.rm = TRUE), apply(summary, 1, function (x) sum(is.na(x))),
-                 apply(summary, 1, function (x) sum(is.na(x))/ncol(summary)), apply(summary, 1, function (x) max(x, na.rm = TRUE)))
+                 apply(summary, 1, function (x) sum(is.na(x))/ncol(summary)), apply(summary, 1, function (x) max(x, na.rm = TRUE)),
+                 colnames(summary)[max.col(replace(summary, is.na(summary), -Inf), ties.method = "last")])
+
   # colnames
-  colnames(summary)<-c("lon","lat","gaugeID","sumPrecip","daysMiss","percMiss", "maxPrecip")
+  colnames(summary)<-c("lon","lat","gaugeID","sumPrecip","daysMiss","percMiss", "maxPrecip","maxDate")
   sumACIS<-summary
+  sumACIS$maxDate<-as.character(sumACIS$maxDate)
   # subset Rainlog
   subMergedData<-mergedData[mergedData$readingDate>=perBeg & mergedData$readingDate<=perEnd,]
   subDates<-seq.Date(perBeg,perEnd,by=1)
@@ -250,7 +254,8 @@ sumPeriod<- subMergedData %>%
                         lon = min(position.lng),
                         maxPrecip = max(rainAmount, na.rm = TRUE),
                         snowAccum = sum(snowAccumulation, na.rm = TRUE),
-                        sumPrecip = sum(rainAmount, na.rm = TRUE)
+                        sumPrecip = sum(rainAmount, na.rm = TRUE),
+                        maxDate = readingDate[which.max(rainAmount)]
                     )
 
 # delete duplicates in lat/lon locations?
@@ -262,7 +267,7 @@ sumPeriod$daysMiss<-(length(subDates)-sumPeriod$countObs)
 # Combine networks into dataframe
 sumACIS$network<-"NOAA-GHCN"
 sumPeriod$network<-"RAINLOG"
-sumPeriod<-rbind.data.frame(sumPeriod[,c(5,4,3,8,10,9,6,11)],sumACIS)
+sumPeriod<-rbind.data.frame(sumPeriod[,c(5,4,3,8,11,10,6,9,12)],sumACIS)
 
 ###### SYNOPTIC API - MESONET data
 # add in mesonet data
@@ -281,19 +286,20 @@ subCombObs<-subCombObs [!duplicated(subCombObs[c("STID","precipDate")]),]
                               lon=first(LONGITUDE),
                               sumPrecip=sum(total),
                               maxPrecip=max(total),
-                              nobs=n())
+                              nobs=n(),
+                              maxDate = precipDate[which.max(total)])
 
   # calculate percent missing
   sumMESO$percMiss<-(1-(sumMESO$nobs/length(subDates)))
   sumMESO$daysMiss<-(length(subDates)-sumMESO$nobs)
   # gauge name label
   sumMESO$gaugeID<-paste0(sumMESO$name," (",sumMESO$netName,")")
-  sumMESO$network<-"MESOWEST"
+  sumMESO$network<-"SYNOPTIC"
   # fix column types
   sumMESO$lon<-as.numeric(sumMESO$lon)
   sumMESO$lat<-as.numeric(sumMESO$lat)
   # thin/reorder
-  sumMESO<-sumMESO[,c(8,7,14,9,13,12,10,15)]
+  sumMESO<-sumMESO[,c(8,7,15,9,14,13,10,12,16)]
   
   # combine with sumPeriod
   sumPeriod<-rbind.data.frame(sumPeriod, sumMESO)
@@ -375,6 +381,9 @@ sumPeriod$spi<-NA
 sumPeriod$spi.sci<-NA
 sumPeriod$perRank<-NA
 
+# filter out lat/lon errors
+sumPeriod<-subset(sumPeriod, lon<0)
+
 ## FIX GRID TO GO PAST AZ BOUNDARY
 for(i in 1:nrow(sumPeriod)){
   ext_ID <- raster::extract(ID_Raster,cellFromXY(pcpStack_az, c(sumPeriod$lon[i],sumPeriod$lat[i])))
@@ -403,18 +412,21 @@ for(i in 1:nrow(sumPeriod)){
   sumPeriod$spi[i]<-spiFitted[nrow(spiFitted),1]
   
   # SCI package SPI estimation
+  #spi.para <- SCI::fitSCI(expVec,first.mon=1,distr="gamma",time.scale=1,p0=TRUE, start.fun.fix=TRUE)
   spi.para <- SCI::fitSCI(expVec,first.mon=1,distr="gamma",time.scale=1,p0=TRUE)
   #spi.sci <- SCI::transformSCI(expVec,first.mon=1,obj=spi.para,sci.limit=3)
   spi.sci <- SCI::transformSCI(expVec,first.mon=1,obj=spi.para)
   spi.sci<-na.omit(spi.sci)
-  sumPeriod$spi.sci[i]<-spi.sci[length(spi.sci)]
-  
+  #sumPeriod$spi.sci[i]<-spi.sci[length(spi.sci)]
+  sumPeriod$spi.sci[i]<-ifelse(length(spi.sci)==0, NA, spi.sci[length(spi.sci)])  
   # percent rank
   sumPeriod$perRank[i]<-round(last(trunc(rank(pptTemp))/length(pptTemp))*100,0)
   
 }
 
 sumPeriod$diffAvg<-sumPeriod$sumPrecip-sumPeriod$avgPRISM
+# fix format of maxDate
+sumPeriod$maxDate<-as.character(sumPeriod$maxDate)
 
 ##### 
 # QA/QC using SPI values
@@ -503,7 +515,7 @@ labs <- lapply(seq(nrow(sumPeriod)), function(i) {
           'Diff from Avg (in): ', round(sumPeriod[i, "diffAvg"],2), '<br>',
           '<b> <font color="red"> SPI: ', round(sumPeriod[i, "spi.sci"],2), '</font></b><br>',
           '%  rank: ', sumPeriod[i,"perRank"], '<br>',
-          'Max 1-day Precip: ', sumPeriod[i,"maxPrecip"], '<br>',
+          'Max 1-day Precip: ', sumPeriod[i,"maxPrecip"]," (",sumPeriod[i,"maxDate"],")",'<br>',
           'Days missing: ', sumPeriod[i,"daysMiss"], '<br>',
           'Gauge: ', sumPeriod[i,"gaugeID"], '<br>',
           'Network: ', sumPeriod[i,"network"]) 
@@ -513,8 +525,8 @@ labs <- lapply(seq(nrow(sumPeriod)), function(i) {
 #   palette = colorRampPalette((c('chocolate4','snow3','green')))(length(sumPeriod$spi)), 
 #   domain = c(3,-3))
 
-pal<- colorNumeric((c('chocolate4','snow3','green')), length(sumPeriod$spi), domain = c(-3,3), reverse = FALSE)
-pal_rev<- colorNumeric((c('chocolate4','snow3','green')), length(sumPeriod$spi), domain = c(-3,3), reverse = TRUE)
+pal<- colorNumeric((c('chocolate4','snow','green')), length(sumPeriod$spi), domain = c(-3,3), reverse = FALSE)
+pal_rev<- colorNumeric((c('chocolate4','snow','green')), length(sumPeriod$spi), domain = c(-3,3), reverse = TRUE)
 
 mapTitle<-paste0(periodName," SPI:<br>", format(perBeg, "%b-%d-%y"),"<br>to ",
        format(perEnd, "%b-%d-%y"))
@@ -553,7 +565,7 @@ leafMap<-leaflet() %>%
 for(n in networks){
   subNet<-sumPeriod[sumPeriod$network==n,]
   leafMap<- leafMap %>% addCircleMarkers(data=subNet, lng=~lon, lat=~lat,
-                   radius = 6,
+                   radius = 5,
                    color = "black",
                    fillColor =  pal(subNet$spi.sci),
                    stroke = TRUE,
@@ -576,7 +588,7 @@ leafMap<-leafMap %>%
   #           opacity = 1) %>%
   addLayersControl(
     baseGroups = c("basemap","satellite","topomap"),
-    overlayGroups = c("PRISM grid", "RAINLOG", "NOAA-GHCN","MESOWEST","USDM"),
+    overlayGroups = c("PRISM grid", "RAINLOG", "NOAA-GHCN","SYNOPTIC","USDM"),
     options = layersControlOptions(collapsed = FALSE))%>%
   hideGroup(c("PRISM grid")) %>%
   addLogo("https://cals.arizona.edu/climate/AZdrought/UA_CSAP_CLIMAS_logos_horiz.png",
@@ -588,12 +600,10 @@ leafMap<-leafMap %>%
           src = "remote")
 
 # save map
-saveWidget(leafMap, file=paste0("/home/crimmins/RProjects/StationDrought/testMaps/MultiNetwork_",periodName,"_SPI.html"), selfcontained = FALSE)
+saveWidget(leafMap, file=paste0("/home/crimmins/RProjects/StationDrought/maps/MultiNetwork_",periodName,"_SPI.html"), selfcontained = FALSE)
 ##### END LEAFLET MAP
 print(periodName)
 }
-
-proc.time() - ptm
 
 # create Website with markdown ----
 library(rmarkdown)

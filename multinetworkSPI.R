@@ -369,7 +369,7 @@ for(i in 1:nrow(sumPeriod)){
   
   # percent rank
   sumPeriod$perRank[i]<-round(last(trunc(rank(pptTemp))/length(pptTemp))*100,0)
-  
+  print(i)
 }
 
 sumPeriod$diffAvg<-sumPeriod$sumPrecip-sumPeriod$avgPRISM

@@ -75,8 +75,8 @@ source("/home/crimmins/RProjects/StationDrought/apiKey.R")
 
 ###### UPDATE dataframe
 # update data in combined data frame
-load("~/RProjects/StationDrought/synopticData/AZDailyPrecip_working_DataFrame.RData")
-load("~/RProjects/StationDrought/synopticData/networkNames.RData")
+load("/home/crimmins/RProjects/StationDrought/synopticData/AZDailyPrecip_working_DataFrame.RData")
+load("/home/crimmins/RProjects/StationDrought/synopticData/networkNames.RData")
 # get needed dates based on dataframe
 start<-paste0(format(max(combObs$precipDate,na.rm=TRUE), "%Y%m%d"),"0000")
 end<-paste0(format(Sys.Date(), "%Y%m%d"),"0000")
@@ -97,16 +97,20 @@ out<-GET(paste0("https://api.synopticdata.com/v2/stations/precip?state=az&start=
   allObs$precipDate<-as.Date(allObs$last_report)
   # merge network info
   allObs<-merge(allObs, networkInfo,by.x="MNET_ID",by.y="ID")
+  # remove new cols -- ADDED on 6/5/2022
+  allObs<-subset(allObs, select=-c(UNITS.position,UNITS.elevation))
+  
 # combine into working dataframe
 combObs<-rbind.data.frame(combObs,allObs) 
 
 # check for duplicates
 combObs<-combObs %>% distinct()
 
-# trim data to last 365 days to save space
+# trim data to last 400 days to maintain df size
+combObs<-subset(combObs, precipDate>=(Sys.Date()-400))
 
 # save to working datafile
-save(combObs, file = paste0("./synopticData/AZDailyPrecip_working_DataFrame.RData"))
+save(combObs, file = "/home/crimmins/RProjects/StationDrought/synopticData/AZDailyPrecip_working_DataFrame.RData")
 #### end update
 rm(list = ls())
 
