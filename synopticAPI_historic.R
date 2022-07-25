@@ -97,14 +97,18 @@ out<-GET(paste0("https://api.synopticdata.com/v2/stations/precip?state=az&start=
   allObs$precipDate<-as.Date(allObs$last_report)
   # merge network info
   allObs<-merge(allObs, networkInfo,by.x="MNET_ID",by.y="ID")
-  # remove new cols -- ADDED on 6/5/2022
-  allObs<-subset(allObs, select=-c(UNITS.position,UNITS.elevation))
+  # remove new cols -- ADDED on 6/5/2022, updated 7/20/2022
+  #colnames(allObs) %in% colnames(combObs)
+  #allObs<-subset(allObs, select=-c(UNITS.position,UNITS.elevation,OBSERVATIONS.precip_accum_since_local_midnight,OBSERVATIONS.precip_accum,
+  #                                 OBSERVATIONS.precip_accum_fifteen_minute,OBSERVATIONS.precip_accum_one_hour))
+  allObs<-subset(allObs, select=-c(which(colnames(allObs) %in% colnames(combObs)==FALSE)))
+                                   
   
 # combine into working dataframe
 combObs<-rbind.data.frame(combObs,allObs) 
 
 # check for duplicates
-combObs<-combObs %>% distinct()
+combObs<-combObs %>% dplyr::distinct()
 
 # trim data to last 400 days to maintain df size
 combObs<-subset(combObs, precipDate>=(Sys.Date()-400))
