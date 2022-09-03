@@ -113,6 +113,9 @@ combObs<-combObs %>% dplyr::distinct()
 # trim data to last 400 days to maintain df size
 combObs<-subset(combObs, precipDate>=(Sys.Date()-400))
 
+# drop HADS stations
+combObs<-subset(combObs, SHORTNAME!="HADS")
+
 # save to working datafile
 save(combObs, file = "/home/crimmins/RProjects/StationDrought/synopticData/AZDailyPrecip_working_DataFrame.RData")
 #### end update
