@@ -381,8 +381,10 @@ sumPeriod$spi<-NA
 sumPeriod$spi.sci<-NA
 sumPeriod$perRank<-NA
 
-# filter out lat/lon errors
+# filter out lat/lon errors --- filtering out wrongly coded lon values
 sumPeriod<-subset(sumPeriod, lon<0)
+sumPeriod<-subset(sumPeriod, lon>=-180)
+
 
 ## FIX GRID TO GO PAST AZ BOUNDARY
 for(i in 1:nrow(sumPeriod)){
