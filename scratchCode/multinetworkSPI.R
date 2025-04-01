@@ -2,8 +2,8 @@
 # adapted from obsForBen.R
 # get Rainlog data for list of days
 # MAC 03/24/21
-# added multinetwork stations 4/30/21
-# added in synoptic API 5/11/2021
+# added multinetwork stations
+# 4/30/21
 
 #library(plyr)
 library(RCurl)
@@ -19,19 +19,13 @@ library(raster)
 library(ff)
 library(leaflet)
 library(leafem)
-library(sf)
-
-
-# update the mesonet dataframe from Synoptic Labs
-source("/home/crimmins/RProjects/StationDrought/synopticAPI_historic.R")
-load("~/RProjects/StationDrought/synopticData/AZDailyPrecip_working_DataFrame.RData")
 
 # load data
 load("/home/crimmins/RProjects/StationDrought/prismGrid.RData")
 
 # DEAL WITH PANDOC ERROR
-#Sys.setenv(RSTUDIO_PANDOC="/usr/lib/rstudio-server/bin/pandoc")
-Sys.setenv(RSTUDIO_PANDOC="/usr/bin/pandoc")
+Sys.setenv(RSTUDIO_PANDOC="/usr/lib/rstudio-server/bin/pandoc")
+
 
 # functions
 numberOfDays <- function(date) {
@@ -44,35 +38,24 @@ numberOfDays <- function(date) {
 
 # USDM data
 tryCatch(download.file("https://droughtmonitor.unl.edu/data/shapefiles_m/USDM_current_M.zip",
-                       destfile = "/home/crimmins/RProjects/StationDrought/usdm.zip"),
+         destfile = "/home/crimmins/RProjects/StationDrought/usdm.zip"),
          error = function(e) print('File not available'))
-
+    
 tryCatch(unzip("/home/crimmins/RProjects/StationDrought/usdm.zip", exdir = "/home/crimmins/RProjects/StationDrought/USDMtemp",overwrite = TRUE),
          error = function(e) print('Error unzipping file; no file?'))
 
-  # old code -- with rgdal
-  #infoSHP<-rgdal::ogrListLayers("/home/crimmins/RProjects/StationDrought/USDMtemp")
-  #usdmSHP<-rgdal::readOGR(dsn="/home/crimmins/RProjects/StationDrought/USDMtemp",layer=infoSHP[length(infoSHP)])
-  # new code with sf
-  infoSHP <- st_layers("/home/crimmins/RProjects/StationDrought/USDMtemp")
-  usdmSHP <- st_read(dsn = "/home/crimmins/RProjects/StationDrought/USDMtemp", 
-                     layer = infoSHP$name[length(infoSHP$name)])
-  usdmSHP<- as(usdmSHP, "Spatial")
-  
+  infoSHP<-rgdal::ogrListLayers("/home/crimmins/RProjects/StationDrought/USDMtemp")
+  usdmSHP<-rgdal::readOGR(dsn="/home/crimmins/RProjects/StationDrought/USDMtemp",layer=infoSHP[length(infoSHP)])
   # clip to smaller region
   usdmSHP <- crop(usdmSHP, extent(-118.3,-105.3, 30.5, 39))
   # color ramp or alt colors from https://www.esri.com/arcgis-blog/products/arcgis-living-atlas/mapping/putting-the-emphasis-where-it-matters/
   USDMpal <- colorFactor("YlOrRd", c(0,1,2,3,4))
   #USDMpal <- colorFactor(c("#f2ecaa","#edc97b","#eb9550","#d94d23","#990000"), c(0,1,2,3,4))
   
-  # OLD -- get USDM date
-  # temp<-substring(infoSHP[length(infoSHP)], c(6,10,12), c(9,11,13))
-  # usdmLab<-paste0(temp[2],"-",temp[3],"-",temp[1])
-  # new -- get USDM date
-  usdmLab <- stringr::str_extract(infoSHP$name[1], "\\d{8}")
-  usdmLab <- format(lubridate::ymd(usdmLab), "%m-%d-%Y")
-  
-  
+  # get USDM date
+  temp<-substring(infoSHP[length(infoSHP)], c(6,10,12), c(9,11,13))
+  usdmLab<-paste0(temp[2],"-",temp[3],"-",temp[1])
+
 ##### USE FF TO CREATE PRISM MATRIX FOR CLIMOS
 pcpStack_az<-stack("/home/crimmins/RProjects/StationDrought/AZ_monthlyPRISM_prec_1895_2020")
 # write matrix to disk
@@ -84,13 +67,13 @@ save(mat,file=paste0(getwd(),"/data.RData"))
 # end write
 
 # set date ranges
-#dateRangeStart<-"2019-07-22"
+#dateRangeStart<-"2021-03-22"
 #dateRangeEnd<-"2021-03-22"
 
 # 365-day SPI
 currDate<-Sys.Date()
 # or test date
-#currDate<-as.Date("2020-09-30",format="%Y-%m-%d")
+#currDate<-as.Date("2020-07-15",format="%Y-%m-%d")
 dateRangeStart=format(currDate-367, "%Y-%m-%d")
 dateRangeEnd=format(currDate-2, "%Y-%m-%d")
 allDates<-seq(as.Date(dateRangeStart), as.Date(dateRangeEnd),1)
@@ -241,16 +224,12 @@ for(k in 1:length(period)){
   # convert obs to numeric
   summary[1:ncol(summary)] <- sapply(summary[1:ncol(summary)],as.character)
   summary[1:ncol(summary)] <- sapply(summary[1:ncol(summary)],as.numeric)
-  
   # add metadata
   summary<-cbind(ll,meta$name,rowSums(summary, na.rm = TRUE), apply(summary, 1, function (x) sum(is.na(x))),
-                 apply(summary, 1, function (x) sum(is.na(x))/ncol(summary)), apply(summary, 1, function (x) max(x, na.rm = TRUE)),
-                 colnames(summary)[max.col(replace(summary, is.na(summary), -Inf), ties.method = "last")])
-
+                 apply(summary, 1, function (x) sum(is.na(x))/ncol(summary)), apply(summary, 1, function (x) max(x, na.rm = TRUE)))
   # colnames
-  colnames(summary)<-c("lon","lat","gaugeID","sumPrecip","daysMiss","percMiss", "maxPrecip","maxDate")
+  colnames(summary)<-c("lon","lat","gaugeID","sumPrecip","daysMiss","percMiss", "maxPrecip")
   sumACIS<-summary
-  sumACIS$maxDate<-as.character(sumACIS$maxDate)
   # subset Rainlog
   subMergedData<-mergedData[mergedData$readingDate>=perBeg & mergedData$readingDate<=perEnd,]
   subDates<-seq.Date(perBeg,perEnd,by=1)
@@ -265,8 +244,7 @@ sumPeriod<- subMergedData %>%
                         lon = min(position.lng),
                         maxPrecip = max(rainAmount, na.rm = TRUE),
                         snowAccum = sum(snowAccumulation, na.rm = TRUE),
-                        sumPrecip = sum(rainAmount, na.rm = TRUE),
-                        maxDate = readingDate[which.max(rainAmount)]
+                        sumPrecip = sum(rainAmount, na.rm = TRUE)
                     )
 
 # delete duplicates in lat/lon locations?
@@ -278,44 +256,8 @@ sumPeriod$daysMiss<-(length(subDates)-sumPeriod$countObs)
 # Combine networks into dataframe
 sumACIS$network<-"NOAA-GHCN"
 sumPeriod$network<-"RAINLOG"
-sumPeriod<-rbind.data.frame(sumPeriod[,c(5,4,3,8,11,10,6,9,12)],sumACIS)
+sumPeriod<-rbind.data.frame(sumPeriod[,c(5,4,3,8,10,9,6,11)],sumACIS)
 
-###### SYNOPTIC API - MESONET data
-# add in mesonet data
-subCombObs<-combObs[combObs$precipDate>=perBeg & combObs$precipDate<=perEnd,]
-# delete stid/day duplicates
-subCombObs<-subCombObs [!duplicated(subCombObs[c("STID","precipDate")]),]
-
-  # # total daily precip
-  sumMESO<-subCombObs %>% group_by(STID) %>%
-                    summarise(dateStart=first(precipDate),
-                              dateEnd=last(precipDate),
-                              name=first(NAME),
-                              netID=first(MNET_ID),
-                              netName=first(SHORTNAME),
-                              lat=first(LATITUDE),
-                              lon=first(LONGITUDE),
-                              sumPrecip=sum(total),
-                              maxPrecip=max(total),
-                              nobs=n(),
-                              maxDate = precipDate[which.max(total)])
-
-  # calculate percent missing
-  sumMESO$percMiss<-(1-(sumMESO$nobs/length(subDates)))
-  sumMESO$daysMiss<-(length(subDates)-sumMESO$nobs)
-  # gauge name label
-  sumMESO$gaugeID<-paste0(sumMESO$name," (",sumMESO$netName,")")
-  sumMESO$network<-"SYNOPTIC"
-  # fix column types
-  sumMESO$lon<-as.numeric(sumMESO$lon)
-  sumMESO$lat<-as.numeric(sumMESO$lat)
-  # thin/reorder
-  sumMESO<-sumMESO[,c(8,7,15,9,14,13,10,12,16)]
-  
-  # combine with sumPeriod
-  sumPeriod<-rbind.data.frame(sumPeriod, sumMESO)
-#####
-  
 # subset less than 10% missing
 sumPeriod<-subset(sumPeriod, percMiss>=0 & percMiss<=0.07)
 # QA/QC - remove max 1-day >10"
@@ -392,11 +334,6 @@ sumPeriod$spi<-NA
 sumPeriod$spi.sci<-NA
 sumPeriod$perRank<-NA
 
-# filter out lat/lon errors --- filtering out wrongly coded lon values
-sumPeriod<-subset(sumPeriod, lon<0)
-sumPeriod<-subset(sumPeriod, lon>=-180)
-
-
 ## FIX GRID TO GO PAST AZ BOUNDARY
 for(i in 1:nrow(sumPeriod)){
   ext_ID <- raster::extract(ID_Raster,cellFromXY(pcpStack_az, c(sumPeriod$lon[i],sumPeriod$lat[i])))
@@ -425,37 +362,17 @@ for(i in 1:nrow(sumPeriod)){
   sumPeriod$spi[i]<-spiFitted[nrow(spiFitted),1]
   
   # SCI package SPI estimation
-  #spi.para <- SCI::fitSCI(expVec,first.mon=1,distr="gamma",time.scale=1,p0=TRUE, start.fun.fix=TRUE)
   spi.para <- SCI::fitSCI(expVec,first.mon=1,distr="gamma",time.scale=1,p0=TRUE)
-  #spi.sci <- SCI::transformSCI(expVec,first.mon=1,obj=spi.para,sci.limit=3)
-  spi.sci <- SCI::transformSCI(expVec,first.mon=1,obj=spi.para)
+  spi.sci <- SCI::transformSCI(expVec,first.mon=1,obj=spi.para,sci.limit=3)
   spi.sci<-na.omit(spi.sci)
-  #sumPeriod$spi.sci[i]<-spi.sci[length(spi.sci)]
-  sumPeriod$spi.sci[i]<-ifelse(length(spi.sci)==0, NA, spi.sci[length(spi.sci)])  
+  sumPeriod$spi.sci[i]<-spi.sci[length(spi.sci)]
+  
   # percent rank
   sumPeriod$perRank[i]<-round(last(trunc(rank(pptTemp))/length(pptTemp))*100,0)
-  
+  print(i)
 }
 
 sumPeriod$diffAvg<-sumPeriod$sumPrecip-sumPeriod$avgPRISM
-# fix format of maxDate
-sumPeriod$maxDate<-as.character(sumPeriod$maxDate)
-
-##### 
-# QA/QC using SPI values
-netStats<-sumPeriod %>% group_by(network) %>%
-                        summarise(maxSPI=max(spi.sci, na.rm = TRUE),
-                                  minSPI=min(spi.sci, na.rm = TRUE),
-                                  medSPI=median(spi.sci, na.rm = TRUE),
-                                  iqrSPI=IQR(spi.sci, na.rm = TRUE),
-                                  meanSPI=mean(spi.sci, na.rm=TRUE),
-                                  sdSPI=sd(spi.sci, na.rm=TRUE))
-# trim stations that are greater than 3sd greater than mean
-sumPeriod<-subset(sumPeriod, spi.sci<=netStats$sdSPI[2]*3+netStats$meanSPI[2])
-sumPeriod$spi.sci<-ifelse(sumPeriod$spi.sci>3, 3, sumPeriod$spi.sci)
-sumPeriod$spi.sci<-ifelse(sumPeriod$spi.sci<(-3), -3, sumPeriod$spi.sci)
-
-##### 
 
 ##### END CLIMATOLOGIES
 
@@ -528,7 +445,7 @@ labs <- lapply(seq(nrow(sumPeriod)), function(i) {
           'Diff from Avg (in): ', round(sumPeriod[i, "diffAvg"],2), '<br>',
           '<b> <font color="red"> SPI: ', round(sumPeriod[i, "spi.sci"],2), '</font></b><br>',
           '%  rank: ', sumPeriod[i,"perRank"], '<br>',
-          'Max 1-day Precip: ', sumPeriod[i,"maxPrecip"]," (",sumPeriod[i,"maxDate"],")",'<br>',
+          'Max 1-day Precip: ', sumPeriod[i,"maxPrecip"], '<br>',
           'Days missing: ', sumPeriod[i,"daysMiss"], '<br>',
           'Gauge: ', sumPeriod[i,"gaugeID"], '<br>',
           'Network: ', sumPeriod[i,"network"]) 
@@ -538,8 +455,8 @@ labs <- lapply(seq(nrow(sumPeriod)), function(i) {
 #   palette = colorRampPalette((c('chocolate4','snow3','green')))(length(sumPeriod$spi)), 
 #   domain = c(3,-3))
 
-pal<- colorNumeric((c('chocolate4','snow','green')), length(sumPeriod$spi), domain = c(-3,3), reverse = FALSE)
-pal_rev<- colorNumeric((c('chocolate4','snow','green')), length(sumPeriod$spi), domain = c(-3,3), reverse = TRUE)
+pal<- colorNumeric((c('chocolate4','snow3','green')), length(sumPeriod$spi), domain = c(-3,3), reverse = FALSE)
+pal_rev<- colorNumeric((c('chocolate4','snow3','green')), length(sumPeriod$spi), domain = c(-3,3), reverse = TRUE)
 
 mapTitle<-paste0(periodName," SPI:<br>", format(perBeg, "%b-%d-%y"),"<br>to ",
        format(perEnd, "%b-%d-%y"))
@@ -578,7 +495,7 @@ leafMap<-leaflet() %>%
 for(n in networks){
   subNet<-sumPeriod[sumPeriod$network==n,]
   leafMap<- leafMap %>% addCircleMarkers(data=subNet, lng=~lon, lat=~lat,
-                   radius = 5,
+                   radius = 6,
                    color = "black",
                    fillColor =  pal(subNet$spi.sci),
                    stroke = TRUE,
@@ -601,7 +518,7 @@ leafMap<-leafMap %>%
   #           opacity = 1) %>%
   addLayersControl(
     baseGroups = c("basemap","satellite","topomap"),
-    overlayGroups = c("PRISM grid", "RAINLOG", "NOAA-GHCN","SYNOPTIC","USDM"),
+    overlayGroups = c("PRISM grid", "RAINLOG", "NOAA-GHCN", "USDM"),
     options = layersControlOptions(collapsed = FALSE))%>%
   hideGroup(c("PRISM grid")) %>%
   addLogo("https://cals.arizona.edu/climate/AZdrought/UA_CSAP_CLIMAS_logos_horiz.png",
@@ -622,7 +539,7 @@ print(periodName)
 library(rmarkdown)
 library(knitr)
 
-render('/home/crimmins/RProjects/StationDrought/maps/AZdrought2.Rmd', output_file='index.html',
+render('/home/crimmins/RProjects/StationDrought/maps/AZdrought.Rmd', output_file='index.html',
        output_dir='/home/crimmins/RProjects/StationDrought/maps', clean=TRUE)
 
-#source('/home/crimmins/RProjects/StationDrought/pushNotify.R')
+source('/home/crimmins/RProjects/StationDrought/pushNotify.R')
